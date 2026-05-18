@@ -1,0 +1,83 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '17'
+  GRADLE_VERSION: '8.7'
+
+jobs:
+  build-debug-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build debug APK
+        id: build_apk
+        run: gradle --no-daemon --stacktrace --info clean :app:assembleDebug
+
+      - name: Upload APK artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk-${{ github.sha }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Collect build diagnostics on failure
+        if: failure()
+        run: |
+          mkdir -p build-logs
+          cp -f /home/runner/.gradle/daemon/*/*.out.log build-logs/ 2>/dev/null || true
+          cp -rf app/build/reports build-logs/app-build-reports 2>/dev/null || true
+          cp -rf build/reports build-logs/root-build-reports 2>/dev/null || true
+          cp -rf app/build/outputs/logs build-logs/app-output-logs 2>/dev/null || true
+          echo "Workflow failed at step: build debug APK" > build-logs/README.txt
+          echo "Check daemon logs and reports in this artifact." >> build-logs/README.txt
+
+      - name: Upload failure logs artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-build-logs-${{ github.sha }}
+          path: build-logs
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Job summary
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "## APK Build Complete" >> $GITHUB_STEP_SUMMARY
+            echo "Artifact name: app-debug-apk-${GITHUB_SHA}" >> $GITHUB_STEP_SUMMARY
+            echo "Go to this run's **Artifacts** section and download the APK." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## APK Build Failed" >> $GITHUB_STEP_SUMMARY
+            echo "Diagnostic artifact: apk-build-logs-${GITHUB_SHA}" >> $GITHUB_STEP_SUMMARY
+            echo "Download logs from **Artifacts** and inspect daemon/reports files." >> $GITHUB_STEP_SUMMARY
+          fi
